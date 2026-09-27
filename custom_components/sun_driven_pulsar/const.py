@@ -1,6 +1,6 @@
 """Constants for the Pulsar integration."""
 
-DOMAIN = "pulsar"
+DOMAIN = "sun_driven_pulsar"
 
 DEFAULT_URL = "https://pulsar.sun-driven.com"
 

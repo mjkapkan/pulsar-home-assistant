@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to Pulsar",
+        "title": "Connect to Pulsar by Sun-Driven",
         "description": "In Pulsar, open an appliance, go to **Linked Devices → Home Assistant → Link Account**, and enter the code shown there. Pulsar never connects to your Home Assistant; this integration connects out to Pulsar once a minute.",
         "data": {
           "pairing_code": "Pairing code"
@@ -36,7 +36,7 @@
       "unknown": "Unexpected error from Pulsar. Try again."
     },
     "abort": {
-      "already_configured": "Pulsar is already set up in this Home Assistant.",
+      "already_configured": "Pulsar by Sun-Driven is already set up in this Home Assistant.",
       "reauth_successful": "Reconnected to Pulsar."
     }
   }

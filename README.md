@@ -1,4 +1,4 @@
-# Pulsar for Home Assistant
+# Pulsar by Sun-Driven for Home Assistant
 
 Lets [Pulsar](https://pulsar.sun-driven.com) run your appliances (boilers, heat pumps,
 heaters, anything on a smart plug) when electricity is cheapest, using the switches and
@@ -13,13 +13,13 @@ Casa, port forwarding or a tunnel, and behind any router or mobile connection.
 
 1. In HACS, open the menu (⋮) → **Custom repositories**, add
    `https://github.com/mjkapkan/pulsar-home-assistant` with type **Integration**.
-2. Find **Pulsar** in HACS, download it, and restart Home Assistant.
+2. Find **Pulsar by Sun-Driven** in HACS, download it, and restart Home Assistant.
 
 ## Connect
 
 1. In Pulsar, open an appliance → **Linked Devices** → **Home Assistant** → **Link Account**.
    Pulsar shows an 8-character code, valid for 15 minutes.
-2. In Home Assistant: **Settings → Devices & services → Add integration → Pulsar**, and
+2. In Home Assistant: **Settings → Devices & services → Add integration → Pulsar by Sun-Driven**, and
    enter the code.
 3. Back in Pulsar, the Home Assistant card lists your switches, lights, fans and input
    booleans within a minute. Link the ones that power the appliance and save.
@@ -46,6 +46,14 @@ Rules it follows:
 - Disconnecting in Pulsar stops the integration; Home Assistant then asks you to reconnect
   with a new code.
 
+## Upgrading from 0.1.0
+
+0.2.0 renamed the integration from `pulsar` to `sun_driven_pulsar` (another integration already
+uses the `pulsar` name). After updating: delete the old **Pulsar** entry under
+**Settings → Devices & services**, remove the `custom_components/pulsar` folder if HACS left it
+behind, restart, and pair again with a new code from Pulsar. Your links to appliances in Pulsar
+are kept.
+
 ## Privacy
 
 Sent to Pulsar: the entity ID, name, room, domain and on/off/unavailable state of switchable
@@ -65,7 +73,7 @@ access to your Home Assistant.
   ```yaml
   logger:
     logs:
-      custom_components.pulsar: debug
+      custom_components.sun_driven_pulsar: debug
   ```
 
 ## License

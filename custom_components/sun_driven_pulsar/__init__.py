@@ -1,4 +1,4 @@
-"""Pulsar: run appliances when electricity is cheapest.
+"""Pulsar by Sun-Driven: run appliances when electricity is cheapest.
 
 The integration connects out to Pulsar every minute. Pulsar never connects to
 Home Assistant, so nothing in the home is exposed to the internet.
