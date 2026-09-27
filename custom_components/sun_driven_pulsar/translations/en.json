@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Pulsar by Sun-Driven",
-        "description": "In Pulsar, open an appliance, go to **Linked Devices → Home Assistant → Link Account**, and enter the code shown there. Pulsar never connects to your Home Assistant; this integration connects out to Pulsar once a minute.",
+        "description": "In Pulsar, open an appliance, go to **Linked Devices → Home Assistant → Link Account**, and enter the code shown there. Pulsar never connects to your Home Assistant; this integration connects out to Pulsar every few seconds.",
         "data": {
           "pairing_code": "Pairing code"
         },

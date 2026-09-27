@@ -29,7 +29,7 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
@@ -44,6 +44,7 @@ from .const import (
     DOMAIN,
     MAX_PENDING_RESULTS,
     MIN_HEARTBEAT_INTERVAL_S,
+    REPORT_AFTER_SWITCH_S,
     STORAGE_VERSION,
     SWITCHABLE_DOMAINS,
 )
@@ -61,6 +62,7 @@ class PulsarAgent:
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
         self._lock = asyncio.Lock()
         self._unsub: CALLBACK_TYPE | None = None
+        self._unsub_report: CALLBACK_TYPE | None = None
         self._integration_version = "unknown"
         self._interval_s = DEFAULT_HEARTBEAT_INTERVAL_S
         self._failsafe_after_s = DEFAULT_FAILSAFE_AFTER_S
@@ -89,6 +91,9 @@ class PulsarAgent:
         if self._unsub:
             self._unsub()
             self._unsub = None
+        if self._unsub_report:
+            self._unsub_report()
+            self._unsub_report = None
         await self._save()
 
     def _schedule(self, seconds: int) -> None:
@@ -105,6 +110,7 @@ class PulsarAgent:
         """One exchange with Pulsar. Never raises."""
         if self._lock.locked():
             return  # The previous heartbeat is still running.
+        switched = 0
         async with self._lock:
             results = self._pending_results[:MAX_PENDING_RESULTS]
             payload = {
@@ -142,9 +148,19 @@ class PulsarAgent:
                 self._interval_s = interval
                 self._schedule(interval)
 
-            await self._apply_targets(response.get("targets") or [])
-            await self._apply_commands(response.get("commands") or [])
+            switched = await self._apply_targets(response.get("targets") or [])
+            switched += await self._apply_commands(response.get("commands") or [])
             await self._save()
+
+        if switched and self._unsub is not None:
+            # Report the new states and results now rather than at the next heartbeat.
+            if self._unsub_report:
+                self._unsub_report()
+            self._unsub_report = async_call_later(self.hass, REPORT_AFTER_SWITCH_S, self._handle_report)
+
+    async def _handle_report(self, _now: Any) -> None:
+        self._unsub_report = None
+        await self.async_heartbeat()
 
     def _collect_entities(self) -> list[dict[str, Any]]:
         """Switchable entities, without configuration/diagnostic, hidden or disabled ones."""
@@ -175,7 +191,9 @@ class PulsarAgent:
             )
         return entities[:1000]
 
-    async def _apply_targets(self, targets: list[dict[str, Any]]) -> None:
+    async def _apply_targets(self, targets: list[dict[str, Any]]) -> int:
+        """Apply targets that changed. Returns how many entities it tried to switch."""
+        switched = 0
         targeted: set[str] = set()
         for target in targets:
             entity_id, want = target.get("entity_id"), target.get("state")
@@ -185,6 +203,7 @@ class PulsarAgent:
             if self._applied.get(entity_id) == want:
                 continue  # Unchanged: leave manual changes alone.
             error = await self._switch(entity_id, want)
+            switched += 1
             self._record(entity_id, want, "schedule", None, error)
             if error is None:
                 self._applied[entity_id] = want
@@ -192,8 +211,11 @@ class PulsarAgent:
         for entity_id in list(self._applied):
             if entity_id not in targeted:
                 del self._applied[entity_id]
+        return switched
 
-    async def _apply_commands(self, commands: list[dict[str, Any]]) -> None:
+    async def _apply_commands(self, commands: list[dict[str, Any]]) -> int:
+        """Apply one-off commands. Returns how many entities it tried to switch."""
+        switched = 0
         now = dt_util.utcnow()
         for command in commands:
             entity_id, want, command_id = command.get("entity_id"), command.get("state"), command.get("id")
@@ -204,6 +226,8 @@ class PulsarAgent:
                 self._record(entity_id, want, "command", command_id, "expired before it arrived")
                 continue
             self._record(entity_id, want, "command", command_id, await self._switch(entity_id, want))
+            switched += 1
+        return switched
 
     async def _maybe_failsafe(self) -> None:
         if self._failsafe_active or self._last_success is None or not self._applied:

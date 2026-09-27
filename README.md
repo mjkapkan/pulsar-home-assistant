@@ -6,7 +6,7 @@ plugs you already have in Home Assistant, including IKEA, Zigbee, Z-Wave, Shelly
 devices.
 
 **Nothing in your home is exposed to the internet.** Pulsar never connects to your Home
-Assistant. This integration connects out to Pulsar once a minute, so it works without Nabu
+Assistant. This integration connects out to Pulsar every few seconds, so it works without Nabu
 Casa, port forwarding or a tunnel, and behind any router or mobile connection.
 
 ## Install
@@ -22,11 +22,11 @@ Casa, port forwarding or a tunnel, and behind any router or mobile connection.
 2. In Home Assistant: **Settings → Devices & services → Add integration → Pulsar by Sun-Driven**, and
    enter the code.
 3. Back in Pulsar, the Home Assistant card lists your switches, lights, fans and input
-   booleans within a minute. Link the ones that power the appliance and save.
+   booleans within seconds. Link the ones that power the appliance and save.
 
 ## What it does
 
-Every minute the integration:
+Every 5 seconds the integration:
 
 - tells Pulsar which switchable entities you have (`switch`, `light`, `fan`,
   `input_boolean`) with their name, room and state. Configuration and diagnostic entities
@@ -38,8 +38,9 @@ Rules it follows:
 
 - **Your manual changes win until the next scheduled change.** If you switch a plug by
   hand, Pulsar does not switch it back until its schedule changes.
-- **Switches from the Pulsar app** arrive within a minute, and are dropped if they arrive
-  more than two minutes late.
+- **Switches from the Pulsar app** arrive within about 5 seconds, and the app shows
+  "Switching…" until Home Assistant confirms the new state. A switch that arrives more than
+  two minutes late is dropped.
 - **Failsafe:** if Pulsar cannot be reached for 15 minutes, every entity Pulsar controls is
   switched **on**, as if Pulsar were not there. Pulsar never leaves a device off because it
   went away. When Pulsar is back, its schedule resumes.
@@ -65,7 +66,7 @@ access to your Home Assistant.
 
 - **"That code is not valid or has expired"**: codes work once and for 15 minutes. Get a new
   one in Pulsar.
-- **Devices do not appear in Pulsar**: they arrive with the next heartbeat (within a minute).
+- **Devices do not appear in Pulsar**: they arrive with the next heartbeat (within seconds).
   Check that the entity is a switch, light, fan or input boolean, and is not hidden, disabled
   or a configuration entity.
 - **Debug logs**: add to `configuration.yaml`:

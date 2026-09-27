@@ -13,11 +13,14 @@ CONF_INSTALLATION_ID = "installation_id"
 SWITCHABLE_DOMAINS = ("switch", "light", "fan", "input_boolean")
 
 # Used until Pulsar's first reply says otherwise.
-DEFAULT_HEARTBEAT_INTERVAL_S = 60
+DEFAULT_HEARTBEAT_INTERVAL_S = 5
 DEFAULT_FAILSAFE_AFTER_S = 900
 DEFAULT_FAILSAFE_STATE = "on"
 # Never poll faster than this, whatever the server asks for.
-MIN_HEARTBEAT_INTERVAL_S = 10
+MIN_HEARTBEAT_INTERVAL_S = 5
+# After switching something, report back this soon instead of waiting for
+# the next heartbeat, so the Pulsar app confirms the change quickly.
+REPORT_AFTER_SWITCH_S = 1.0
 
 STORAGE_VERSION = 1
 # Results kept for the next heartbeat if Pulsar is unreachable for a while.
