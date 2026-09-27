@@ -67,3 +67,7 @@ access to your Home Assistant.
     logs:
       custom_components.pulsar: debug
   ```
+
+## License
+
+MIT. This repository contains only the Home Assistant integration; the Pulsar service it connects to is separate.
