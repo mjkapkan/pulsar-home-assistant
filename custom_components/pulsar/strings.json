@@ -1,0 +1,43 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Pulsar",
+        "description": "In Pulsar, open an appliance, go to **Linked Devices → Home Assistant → Link Account**, and enter the code shown there. Pulsar never connects to your Home Assistant; this integration connects out to Pulsar once a minute.",
+        "data": {
+          "pairing_code": "Pairing code"
+        },
+        "data_description": {
+          "pairing_code": "8 characters, e.g. ABCD-EF23. Valid for 15 minutes."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced",
+            "data": {
+              "url": "Pulsar address"
+            },
+            "data_description": {
+              "url": "Leave as is unless you run your own Pulsar server."
+            }
+          }
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect to Pulsar",
+        "description": "Pulsar no longer accepts this Home Assistant: it was disconnected in Pulsar or paired again. Get a new code in Pulsar and enter it here.",
+        "data": {
+          "pairing_code": "Pairing code"
+        }
+      }
+    },
+    "error": {
+      "invalid_code": "That code is not valid or has expired. Get a new one in Pulsar.",
+      "cannot_connect": "Could not reach Pulsar. Check this Home Assistant's internet connection.",
+      "unknown": "Unexpected error from Pulsar. Try again."
+    },
+    "abort": {
+      "already_configured": "Pulsar is already set up in this Home Assistant.",
+      "reauth_successful": "Reconnected to Pulsar."
+    }
+  }
+}
