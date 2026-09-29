@@ -47,14 +47,6 @@ Rules it follows:
 - Disconnecting in Pulsar stops the integration; Home Assistant then asks you to reconnect
   with a new code.
 
-## Upgrading from 0.1.0
-
-0.2.0 renamed the integration from `pulsar` to `sun_driven_pulsar` (another integration already
-uses the `pulsar` name). After updating: delete the old **Pulsar** entry under
-**Settings → Devices & services**, remove the `custom_components/pulsar` folder if HACS left it
-behind, restart, and pair again with a new code from Pulsar. Your links to appliances in Pulsar
-are kept.
-
 ## Privacy
 
 Sent to Pulsar: the entity ID, name, room, domain and on/off/unavailable state of switchable
