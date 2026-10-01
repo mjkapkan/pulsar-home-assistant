@@ -8,6 +8,10 @@ Behaviour (see README):
 - If Pulsar is unreachable for failsafe_after_s, every entity Pulsar controls
   is switched to the failsafe state (on) once. A device is never held off
   indefinitely because Pulsar went away.
+- Power readings go with each heartbeat. When a sensor Pulsar asks to watch
+  (report_on_change: the meters of a living area with a power limit) changes,
+  the next heartbeat is sent at once, at most once a second, so Pulsar can
+  react to an overload within about a second.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 import logging
+import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -25,11 +30,11 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     __version__ as HA_VERSION,
 )
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
@@ -42,12 +47,17 @@ from .const import (
     DEFAULT_FAILSAFE_STATE,
     DEFAULT_HEARTBEAT_INTERVAL_S,
     DOMAIN,
+    MAX_ENTITIES,
+    MAX_METERS,
     MAX_PENDING_RESULTS,
+    MAX_WATCHED,
     MIN_HEARTBEAT_INTERVAL_S,
+    MIN_REPORT_INTERVAL_S,
     REPORT_AFTER_SWITCH_S,
     STORAGE_VERSION,
     SWITCHABLE_DOMAINS,
 )
+from .power import device_power_sensor, is_power_sensor, power_w
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +73,11 @@ class PulsarAgent:
         self._lock = asyncio.Lock()
         self._unsub: CALLBACK_TYPE | None = None
         self._unsub_report: CALLBACK_TYPE | None = None
+        # Sensors whose changes are reported at once, and the pending early heartbeat.
+        self._watched: tuple[str, ...] = ()
+        self._unsub_watch: CALLBACK_TYPE | None = None
+        self._unsub_soon: CALLBACK_TYPE | None = None
+        self._last_heartbeat_at = 0.0  # time.monotonic()
         self._integration_version = "unknown"
         self._interval_s = DEFAULT_HEARTBEAT_INTERVAL_S
         self._failsafe_after_s = DEFAULT_FAILSAFE_AFTER_S
@@ -94,6 +109,10 @@ class PulsarAgent:
         if self._unsub_report:
             self._unsub_report()
             self._unsub_report = None
+        self._watch([])
+        if self._unsub_soon:
+            self._unsub_soon()
+            self._unsub_soon = None
         await self._save()
 
     def _schedule(self, seconds: int) -> None:
@@ -112,12 +131,15 @@ class PulsarAgent:
             return  # The previous heartbeat is still running.
         switched = 0
         async with self._lock:
+            self._last_heartbeat_at = time.monotonic()
             results = self._pending_results[:MAX_PENDING_RESULTS]
+            entities, meters = self._collect()
             payload = {
                 "integration_version": self._integration_version,
                 "ha_version": HA_VERSION,
                 "location_name": (self.hass.config.location_name or "")[:120],
-                "entities": self._collect_entities(),
+                "entities": entities,
+                "meters": meters,
                 "results": results,
             }
             try:
@@ -150,6 +172,7 @@ class PulsarAgent:
 
             switched = await self._apply_targets(response.get("targets") or [])
             switched += await self._apply_commands(response.get("commands") or [])
+            self._watch(response.get("report_on_change") or [])
             await self._save()
 
         if switched and self._unsub is not None:
@@ -162,23 +185,64 @@ class PulsarAgent:
         self._unsub_report = None
         await self.async_heartbeat()
 
-    def _collect_entities(self) -> list[dict[str, Any]]:
-        """Switchable entities, without configuration/diagnostic, hidden or disabled ones."""
+    def _collect(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Switchable entities, with what their device draws, and power sensors (meters).
+
+        Configuration/diagnostic, hidden and disabled switchable entities are left
+        out; power sensors are left out only when disabled.
+        """
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
         area_reg = ar.async_get(self.hass)
-        entities: list[dict[str, Any]] = []
+
+        def area_name(entry: er.RegistryEntry | None) -> str | None:
+            area_id = entry.area_id if entry else None
+            if area_id is None and entry is not None and entry.device_id:
+                device = dev_reg.async_get(entry.device_id)
+                area_id = device.area_id if device else None
+            area = area_reg.async_get_area(area_id) if area_id else None
+            return area.name[:120] if area else None
+
+        meters: list[dict[str, Any]] = []
+        power_by_device: dict[str, list[State]] = {}
+        for state in self.hass.states.async_all("sensor"):
+            if not is_power_sensor(state):
+                continue
+            entry = ent_reg.async_get(state.entity_id)
+            if entry is not None and entry.disabled_by is not None:
+                continue
+            if entry is not None and entry.device_id:
+                power_by_device.setdefault(entry.device_id, []).append(state)
+            meters.append(
+                {
+                    "entity_id": state.entity_id,
+                    "name": state.name[:200],
+                    "power_w": power_w(state),
+                    "available": state.state != STATE_UNAVAILABLE,
+                    "area": area_name(entry),
+                }
+            )
+        meters.sort(key=lambda m: m["entity_id"])
+
+        switchables: list[tuple[State, er.RegistryEntry | None]] = []
+        switches_by_device: dict[str, int] = {}
         for state in self.hass.states.async_all(SWITCHABLE_DOMAINS):
             entry = ent_reg.async_get(state.entity_id)
             if entry is not None and (
                 entry.entity_category is not None or entry.hidden_by is not None or entry.disabled_by is not None
             ):
                 continue
-            area_id = entry.area_id if entry else None
-            if area_id is None and entry is not None and entry.device_id:
-                device = dev_reg.async_get(entry.device_id)
-                area_id = device.area_id if device else None
-            area = area_reg.async_get_area(area_id) if area_id else None
+            switchables.append((state, entry))
+            if entry is not None and entry.device_id:
+                switches_by_device[entry.device_id] = switches_by_device.get(entry.device_id, 0) + 1
+
+        entities: list[dict[str, Any]] = []
+        for state, entry in switchables:
+            sensor = None
+            if entry is not None and entry.device_id:
+                sensor = device_power_sensor(
+                    state.entity_id, power_by_device.get(entry.device_id, []), switches_by_device[entry.device_id]
+                )
             entities.append(
                 {
                     "entity_id": state.entity_id,
@@ -186,10 +250,42 @@ class PulsarAgent:
                     "domain": state.domain,
                     "state": state.state[:64],
                     "available": state.state != STATE_UNAVAILABLE,
-                    "area": area.name[:120] if area else None,
+                    "area": area_name(entry),
+                    "power_w": power_w(sensor),
                 }
             )
-        return entities[:1000]
+        return entities[:MAX_ENTITIES], meters[:MAX_METERS]
+
+    def _watch(self, entity_ids: list[Any]) -> None:
+        """Report changes of these sensors at once (Pulsar's report_on_change)."""
+        wanted = tuple(sorted({e for e in entity_ids if isinstance(e, str)}))[:MAX_WATCHED]
+        if wanted == self._watched:
+            return
+        if self._unsub_watch:
+            self._unsub_watch()
+            self._unsub_watch = None
+        self._watched = wanted
+        if wanted:
+            self._unsub_watch = async_track_state_change_event(self.hass, list(wanted), self._handle_watched_change)
+
+    @callback
+    def _handle_watched_change(self, _event: Event) -> None:
+        self._heartbeat_soon()
+
+    def _heartbeat_soon(self) -> None:
+        """Send a heartbeat now, or as soon as one a second is not exceeded."""
+        if self._unsub_soon is not None or self._unsub is None:
+            return  # One is already on its way, or the agent is stopped.
+        wait = max(0.0, MIN_REPORT_INTERVAL_S - (time.monotonic() - self._last_heartbeat_at))
+        self._unsub_soon = async_call_later(self.hass, wait, self._handle_soon)
+
+    async def _handle_soon(self, _now: Any) -> None:
+        self._unsub_soon = None
+        if self._lock.locked():
+            # A heartbeat is under way with older readings: send another after it.
+            self._heartbeat_soon()
+            return
+        await self.async_heartbeat()
 
     async def _apply_targets(self, targets: list[dict[str, Any]]) -> int:
         """Apply targets that changed. Returns how many entities it tried to switch."""

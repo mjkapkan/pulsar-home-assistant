@@ -22,6 +22,13 @@ MIN_HEARTBEAT_INTERVAL_S = 5
 # the next heartbeat, so the Pulsar app confirms the change quickly.
 REPORT_AFTER_SWITCH_S = 1.0
 
+# A watched sensor (report_on_change) triggers a heartbeat at most this often.
+MIN_REPORT_INTERVAL_S = 1.0
+
 STORAGE_VERSION = 1
 # Results kept for the next heartbeat if Pulsar is unreachable for a while.
 MAX_PENDING_RESULTS = 200
+# What one heartbeat reports at most (Pulsar's limits).
+MAX_ENTITIES = 1000
+MAX_METERS = 200
+MAX_WATCHED = 50

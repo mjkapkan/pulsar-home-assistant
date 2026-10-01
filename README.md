@@ -31,6 +31,9 @@ Every 5 seconds the integration:
 - tells Pulsar which switchable entities you have (`switch`, `light`, `fan`,
   `input_boolean`) with their name, room and state. Configuration and diagnostic entities
   (child lock, LED, auto-update switches), hidden and disabled entities are left out;
+- reports what each of those entities is drawing, when its device has a power sensor, and
+  the readings of your power sensors (in W or kW). Pulsar uses them to keep a living area
+  under its power limit with measured power instead of estimates;
 - receives the state Pulsar wants for each entity you linked, and switches it when that
   state **changes**.
 
@@ -41,6 +44,10 @@ Rules it follows:
 - **Switches from the Pulsar app** arrive within about 5 seconds, and the app shows
   "Switching…" until Home Assistant confirms the new state. A switch that arrives more than
   two minutes late is dropped.
+- **Meters report at once.** When a Pulsar living area uses some of your power sensors as
+  its meters, a change in one of them is reported straight away (at most once a second)
+  instead of at the next heartbeat, so Pulsar can pause appliances within about a second of
+  an overload.
 - **Failsafe:** if Pulsar cannot be reached for 15 minutes, every entity Pulsar controls is
   switched **on**, as if Pulsar were not there. Pulsar never leaves a device off because it
   went away. When Pulsar is back, its schedule resumes.
@@ -50,9 +57,19 @@ Rules it follows:
 ## Privacy
 
 Sent to Pulsar: the entity ID, name, room, domain and on/off/unavailable state of switchable
-entities, your Home Assistant's name and version, and the result of each switch Pulsar asked
-for. Nothing else: no other entities, no history, no location, no credentials. Pulsar gets no
+entities, the current reading of power sensors (with their entity ID, name and room), your
+Home Assistant's name and version, and the result of each switch Pulsar asked for. Nothing
+else: no other entities, no history, no location, no credentials. Pulsar gets no
 access to your Home Assistant.
+
+## Development
+
+Tests run against Home Assistant itself:
+
+```sh
+pip install -r requirements_test.txt
+pytest
+```
 
 ## Troubleshooting
 
