@@ -4,6 +4,10 @@ Behaviour (see README):
 - A target is applied only when it differs from the last target applied to
   that entity, so manual changes in Home Assistant are kept until Pulsar's
   desired state next changes.
+- Pulsar switches off only runs it switched on itself. A device already on
+  when Pulsar wants it on (an automation's run, or by hand) is not Pulsar's;
+  neither is one someone switched since. Such runs are left on when Pulsar's
+  slot ends, for whoever started them to end.
 - One-off commands from the Pulsar UI are applied unless valid_until passed.
 - If Pulsar is unreachable for failsafe_after_s, every entity Pulsar controls
   is switched to the failsafe state (on) once. A device is never held off
@@ -13,6 +17,7 @@ Behaviour (see README):
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from datetime import timedelta
 import logging
 from typing import Any
@@ -25,11 +30,11 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     __version__ as HA_VERSION,
 )
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, Context, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
@@ -63,12 +68,19 @@ class PulsarAgent:
         self._lock = asyncio.Lock()
         self._unsub: CALLBACK_TYPE | None = None
         self._unsub_report: CALLBACK_TYPE | None = None
+        # Entities whose on/off changes are followed, to know who switched them.
+        self._tracked: tuple[str, ...] = ()
+        self._unsub_tracked: CALLBACK_TYPE | None = None
+        # Contexts of Pulsar's own service calls: a state change with one of them is Pulsar's.
+        self._contexts: deque[str] = deque(maxlen=50)
         self._integration_version = "unknown"
         self._interval_s = DEFAULT_HEARTBEAT_INTERVAL_S
         self._failsafe_after_s = DEFAULT_FAILSAFE_AFTER_S
         self._failsafe_state = DEFAULT_FAILSAFE_STATE
         # Persisted across restarts.
         self._applied: dict[str, str] = {}
+        # Entities on because Pulsar switched them on, untouched since: the only runs it ends.
+        self._owned: set[str] = set()
         self._pending_results: list[dict[str, Any]] = []
         self._last_success: float | None = None
         self._failsafe_active = False
@@ -77,12 +89,14 @@ class PulsarAgent:
         """Load saved state and start heartbeating."""
         saved = await self._store.async_load() or {}
         self._applied = dict(saved.get("applied", {}))
+        self._owned = set(saved.get("owned", []))
         self._pending_results = list(saved.get("pending_results", []))
         self._last_success = saved.get("last_success")
         self._failsafe_active = bool(saved.get("failsafe_active", False))
         self._failsafe_after_s = int(saved.get("failsafe_after_s", DEFAULT_FAILSAFE_AFTER_S))
         self._failsafe_state = saved.get("failsafe_state", DEFAULT_FAILSAFE_STATE)
         self._integration_version = str((await async_get_integration(self.hass, DOMAIN)).version)
+        self._track()
         self._schedule(self._interval_s)
         self.entry.async_create_background_task(self.hass, self.async_heartbeat(), "pulsar first heartbeat")
 
@@ -94,6 +108,10 @@ class PulsarAgent:
         if self._unsub_report:
             self._unsub_report()
             self._unsub_report = None
+        if self._unsub_tracked:
+            self._unsub_tracked()
+            self._unsub_tracked = None
+        self._tracked = ()
         await self._save()
 
     def _schedule(self, seconds: int) -> None:
@@ -202,6 +220,14 @@ class PulsarAgent:
             targeted.add(entity_id)
             if self._applied.get(entity_id) == want:
                 continue  # Unchanged: leave manual changes alone.
+            current = self.hass.states.get(entity_id)
+            if current is not None and current.state == "on" and (want == "on" or entity_id not in self._owned):
+                # Already on: nothing to switch. Not Pulsar's run unless it switched it on
+                # itself (owned), so at the end of the slot it is left to whoever did.
+                if want == "off":
+                    _LOGGER.info("Leaving %s on: it was switched on by something other than Pulsar", entity_id)
+                self._applied[entity_id] = want
+                continue
             error = await self._switch(entity_id, want)
             switched += 1
             self._record(entity_id, want, "schedule", None, error)
@@ -211,6 +237,8 @@ class PulsarAgent:
         for entity_id in list(self._applied):
             if entity_id not in targeted:
                 del self._applied[entity_id]
+                self._owned.discard(entity_id)
+        self._track()
         return switched
 
     async def _apply_commands(self, commands: list[dict[str, Any]]) -> int:
@@ -247,6 +275,35 @@ class PulsarAgent:
         self._failsafe_active = True
         await self._save()
 
+    def _track(self, *extra: str) -> None:
+        """Follow on/off changes of the entities Pulsar controls (and `extra`)."""
+        wanted = tuple(sorted(set(self._applied) | self._owned | set(extra)))
+        if wanted == self._tracked:
+            return
+        if self._unsub_tracked:
+            self._unsub_tracked()
+            self._unsub_tracked = None
+        self._tracked = wanted
+        if wanted:
+            self._unsub_tracked = async_track_state_change_event(self.hass, list(wanted), self._handle_state_change)
+
+    @callback
+    def _handle_state_change(self, event: Event) -> None:
+        """Who switched it: Pulsar (one of its contexts) owns the run it switched on."""
+        old, new = event.data.get("old_state"), event.data.get("new_state")
+        if new is None or new.state not in ("on", "off"):
+            return
+        entity_id = event.data["entity_id"]
+        if new.context.id in self._contexts:
+            if new.state == "on":
+                self._owned.add(entity_id)
+            else:
+                self._owned.discard(entity_id)
+        elif old is not None and old.state in ("on", "off") and old.state != new.state:
+            # Switched by someone else (an automation, by hand): no longer Pulsar's.
+            # Unavailable/unknown flaps, e.g. while Home Assistant starts, don't count.
+            self._owned.discard(entity_id)
+
     async def _switch(self, entity_id: str, state: str) -> str | None:
         """Turn an entity on or off. Returns an error message, or None on success."""
         domain = entity_id.split(".", 1)[0]
@@ -254,12 +311,17 @@ class PulsarAgent:
             return f"Pulsar cannot switch {domain} entities"
         if self.hass.states.get(entity_id) is None:
             return "entity not found in Home Assistant"
+        # The state change carries this context, so the run is known to be Pulsar's.
+        context = Context()
+        self._contexts.append(context.id)
+        self._track(entity_id)
         try:
             await self.hass.services.async_call(
                 domain,
                 SERVICE_TURN_ON if state == "on" else SERVICE_TURN_OFF,
                 {ATTR_ENTITY_ID: entity_id},
                 blocking=True,
+                context=context,
             )
         except (HomeAssistantError, ValueError) as err:
             _LOGGER.warning("Could not switch %s %s: %s", entity_id, state, err)
@@ -286,6 +348,7 @@ class PulsarAgent:
         await self._store.async_save(
             {
                 "applied": self._applied,
+                "owned": sorted(self._owned),
                 "pending_results": self._pending_results,
                 "last_success": self._last_success,
                 "failsafe_active": self._failsafe_active,
