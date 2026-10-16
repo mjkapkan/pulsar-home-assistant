@@ -41,6 +41,10 @@ Rules it follows:
 
 - **Your manual changes win until the next scheduled change.** If you switch a plug by
   hand, Pulsar does not switch it back until its schedule changes.
+- **Pulsar switches off only what it switched on.** If a device is already on when Pulsar's
+  slot starts (an automation's run, or by hand), or someone switches it during the slot,
+  Pulsar leaves it on when the slot ends, for whoever started it to switch off. A pause to
+  keep a living area under its power limit still switches it off.
 - **Switches from the Pulsar app** arrive within about 5 seconds, and the app shows
   "Switching…" until Home Assistant confirms the new state. A switch that arrives more than
   two minutes late is dropped.
