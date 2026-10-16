@@ -7,7 +7,8 @@ Behaviour (see README):
 - Pulsar switches off only runs it switched on itself. A device already on
   when Pulsar wants it on (an automation's run, or by hand) is not Pulsar's;
   neither is one someone switched since. Such runs are left on when Pulsar's
-  slot ends, for whoever started them to end.
+  slot ends, for whoever started them to end. A power-limit pause (off with a
+  run_type) still switches them off.
 - One-off commands from the Pulsar UI are applied unless valid_until passed.
 - If Pulsar is unreachable for failsafe_after_s, every entity Pulsar controls
   is switched to the failsafe state (on) once. A device is never held off
@@ -221,7 +222,10 @@ class PulsarAgent:
             if self._applied.get(entity_id) == want:
                 continue  # Unchanged: leave manual changes alone.
             current = self.hass.states.get(entity_id)
-            if current is not None and current.state == "on" and (want == "on" or entity_id not in self._owned):
+            # "off" during a run (it has a run_type) is a power-limit pause: applied
+            # whoever switched the device on, to keep the area under its limit.
+            paused = want == "off" and bool(target.get("run_type"))
+            if current is not None and current.state == "on" and (want == "on" or (entity_id not in self._owned and not paused)):
                 # Already on: nothing to switch. Not Pulsar's run unless it switched it on
                 # itself (owned), so at the end of the slot it is left to whoever did.
                 if want == "off":

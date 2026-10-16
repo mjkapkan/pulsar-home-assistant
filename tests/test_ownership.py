@@ -24,10 +24,11 @@ async def start(hass: HomeAssistant, entry: MockConfigEntry, initial: bool = Fal
     return entry.runtime_data
 
 
-async def heartbeat(hass: HomeAssistant, agent: Any, pulsar: Any, target: str | None = None, command: str | None = None) -> None:
+async def heartbeat(hass: HomeAssistant, agent: Any, pulsar: Any, target: str | None = None, command: str | None = None,
+                    run_type: str | None = None) -> None:
     pulsar.response = {
         "ok": True,
-        "targets": [{"entity_id": HEATER, "state": target}] if target else [],
+        "targets": [{"entity_id": HEATER, "state": target, **({"run_type": run_type} if run_type else {})}] if target else [],
         "commands": [{"id": "c1", "entity_id": HEATER, "state": command, "valid_until": "2999-01-01T00:00:00+00:00"}] if command else [],
     }
     await agent.async_heartbeat()
@@ -77,6 +78,16 @@ async def test_a_run_switched_by_someone_during_the_slot_is_theirs(hass: HomeAss
     await someone(hass, "turn_on")
     await heartbeat(hass, agent, pulsar, "off")
     assert state(hass) == "on"
+
+
+async def test_a_power_limit_pause_applies_whoever_switched_it_on(hass: HomeAssistant, entry: MockConfigEntry, pulsar: Any) -> None:
+    agent = await start(hass, entry)
+    await heartbeat(hass, agent, pulsar, "off")
+    await someone(hass, "turn_on")
+    await heartbeat(hass, agent, pulsar, "on", run_type="optimized")
+    # Pulsar's run, held off because the area is over its limit ("Paused: Home power limit").
+    await heartbeat(hass, agent, pulsar, "off", run_type="optimized")
+    assert state(hass) == "off"
 
 
 async def test_a_command_from_the_pulsar_app_always_applies(hass: HomeAssistant, entry: MockConfigEntry, pulsar: Any) -> None:
