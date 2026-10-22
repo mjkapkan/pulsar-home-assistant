@@ -47,6 +47,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import PulsarAuthError, PulsarClient, PulsarError
 from .const import (
+    AUTH_GIVE_UP_AFTER_S,
     CONF_API_KEY,
     CONF_URL,
     DEFAULT_FAILSAFE_AFTER_S,
@@ -100,6 +101,8 @@ class PulsarAgent:
         self._pending_results: list[dict[str, Any]] = []
         self._last_success: float | None = None
         self._failsafe_active = False
+        # When Pulsar started refusing the key, while it goes on.
+        self._refused_since: float | None = None
 
     async def async_start(self) -> None:
         """Load saved state and start heartbeating."""
@@ -164,6 +167,13 @@ class PulsarAgent:
             try:
                 response = await self._client.heartbeat(payload)
             except PulsarAuthError:
+                now = dt_util.utcnow().timestamp()
+                if self._refused_since is None:
+                    self._refused_since = now
+                if now - self._refused_since < AUTH_GIVE_UP_AFTER_S:
+                    _LOGGER.debug("Pulsar refused this Home Assistant's key; trying again")
+                    await self._maybe_failsafe()
+                    return
                 _LOGGER.warning("Pulsar no longer accepts this Home Assistant; re-pair it to continue")
                 if self._unsub:
                     self._unsub()
@@ -176,6 +186,7 @@ class PulsarAgent:
                 return
 
             # Delivered: drop the results we sent.
+            self._refused_since = None
             self._pending_results = self._pending_results[len(results):]
             self._last_success = dt_util.utcnow().timestamp()
             if self._failsafe_active:

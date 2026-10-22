@@ -19,12 +19,16 @@ class FakePulsar:
     def __init__(self) -> None:
         self.payloads: list[dict[str, Any]] = []
         self.response: dict[str, Any] = {"ok": True, "targets": [], "commands": []}
+        # Raised instead of answering, when set.
+        self.error: Exception | None = None
 
     def client(self, *_args: Any) -> FakePulsar:
         return self
 
     async def heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.payloads.append(payload)
+        if self.error:
+            raise self.error
         return dict(self.response)
 
 
