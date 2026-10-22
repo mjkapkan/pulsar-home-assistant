@@ -25,3 +25,6 @@ REPORT_AFTER_SWITCH_S = 1.0
 STORAGE_VERSION = 1
 # Results kept for the next heartbeat if Pulsar is unreachable for a while.
 MAX_PENDING_RESULTS = 200
+# Pulsar refusing this installation's key counts only once it has gone on this
+# long: one refusal of a key accepted seconds before is not an unlink.
+AUTH_GIVE_UP_AFTER_S = 600

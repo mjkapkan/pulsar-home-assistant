@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import aiohttp
@@ -49,7 +50,16 @@ class PulsarClient:
                 f"{self._url}{path}", json=payload, headers=headers, timeout=REQUEST_TIMEOUT
             ) as resp:
                 if resp.status == 401:
-                    raise PulsarAuthError("unauthorized")
+                    # Pulsar's own refusal is JSON. Google's front end, in front of
+                    # Pulsar, has answered 401 once for a valid key: that is a failed
+                    # heartbeat, not a refusal (pulsar-web#57).
+                    try:
+                        body = json.loads(await resp.text())
+                    except ValueError:
+                        body = None
+                    if isinstance(body, dict) and body.get("error") == "unauthorized":
+                        raise PulsarAuthError("unauthorized")
+                    raise PulsarError("HTTP 401 from in front of Pulsar")
                 if resp.status == 403 and not authenticated:
                     raise PulsarInvalidCode("invalid_or_expired_code")
                 if resp.status >= 400:
